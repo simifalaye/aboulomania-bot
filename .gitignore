@@ -1,0 +1,13 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLITE database
+*.db
+
+# Log file
+app.log*
+
+# Config file
+config.json

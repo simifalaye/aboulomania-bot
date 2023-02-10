@@ -1,0 +1,4 @@
+aiosqlite
+discord.py
+pytz
+tabulate

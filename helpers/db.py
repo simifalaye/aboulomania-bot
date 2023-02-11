@@ -45,7 +45,7 @@ async def read_all_server_configs() -> list[ServerConfig] | None:
             logger.error(e)
             return None
 
-async def read_one_server_config(server_id: int) -> ServerConfig | None:
+async def read_server_config(server_id: int) -> ServerConfig | None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             rows = await db.execute(
@@ -82,7 +82,7 @@ async def delete_all_server_configs() -> bool:
             logger.error(e)
             return False
 
-async def delete_one_server_config(server_id: int) -> bool:
+async def delete_server_config(server_id: int) -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute("DELETE FROM server_configs WHERE server_id=?", (server_id,))
@@ -138,7 +138,7 @@ async def read_all_draw_entries_for_server(server_id: int) -> list[DrawEntry] | 
             logger.error(e)
             return None
 
-async def read_one_draw_entry(server_id: int, user_id: int) -> DrawEntry | None:
+async def read_draw_entry(server_id: int, user_id: int) -> DrawEntry | None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             rows = await db.execute(
@@ -180,6 +180,16 @@ async def delete_all_entries_for_server(server_id: int) -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute("DELETE FROM draw_entries WHERE server_id=?", (server_id,))
+            await db.commit()
+            return True
+        except Exception as e:
+            logger.error(e)
+            return False
+
+async def delete_draw_entry(server_id: int, user_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute("DELETE FROM draw_entries WHERE server_id=? AND user_id=?", (server_id, user_id,))
             await db.commit()
             return True
         except Exception as e:
@@ -231,7 +241,7 @@ async def read_all_draw_stats_for_server(server_id: int) -> list[DrawStats] | No
             logger.error(e)
             return None
 
-async def read_one_draw_stat(server_id: int, user_id: int) -> DrawStats | None:
+async def read_draw_stat(server_id: int, user_id: int) -> DrawStats | None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             rows = await db.execute(
@@ -275,7 +285,7 @@ async def delete_all_draw_stats() -> bool:
             logger.error(e)
             return False
 
-async def delete_all_stats_for_server(server_id: int) -> bool:
+async def delete_all_draw_stats_for_server(server_id: int) -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute("DELETE FROM draw_stats WHERE server_id=?", (server_id,))

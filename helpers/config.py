@@ -4,12 +4,27 @@ import json
 
 from helpers.logger import logger
 
-def check_required(config, field, type):
+def check_required(config: dict, field: str, type: type):
+    """Ensure a required field is present and has the correct type
+
+    Args:
+        config: config
+        field: dict field to check
+        type: type of field
+    """
     if field not in config or not config[field] or not isinstance(config[field], type):
         logger.error("Application started with invalid '{}' provided.".format(field))
         sys.exit("'config.json' MUST contain a valid '{}'.".format(field))
 
-def set_default(config, field, type, default):
+def set_default(config: dict, field: str, type: type, default):
+    """Check if field is present and has correct type or use default
+
+    Args:
+        default (any): default value
+        config: config
+        field: dict field to check
+        type: type of field
+    """
     if field not in config or not config[field] or not isinstance(config[field], type):
         config[field] = default
 

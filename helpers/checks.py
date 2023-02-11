@@ -1,5 +1,3 @@
-import os
-import json
 from typing import Callable, TypeVar
 
 import discord
@@ -7,13 +5,19 @@ from discord.ext import commands
 
 from exceptions import *
 from helpers import db
+from helpers.config import config as app_config
 
 T = TypeVar("T")
 
 def channel_set() -> Callable[[T], T]:
+    """Checks to see if request is comming from the configured listening channel
+
+    Returns:
+        True if it is the correct channel
+    """
     async def predicate(ctx: commands.Context) -> bool:
         if ctx.guild:
-            entry = await db.read_one_server_config(ctx.guild.id)
+            entry = await db.read_server_config(ctx.guild.id)
             if entry:
                 channel = discord.utils.get(ctx.guild.text_channels, id=entry.channel_id)
                 if channel and channel.id == ctx.channel.id:
@@ -24,16 +28,24 @@ def channel_set() -> Callable[[T], T]:
     return commands.check(predicate)
 
 def is_owner() -> Callable[[T], T]:
+    """Checks to see if user is an owner
+
+    Returns:
+        True if user is an owner
+    """
     async def predicate(ctx: commands.Context) -> bool:
-        with open(f"{os.path.realpath(os.path.dirname(__file__))}/../config.json") as file:
-            data = json.load(file)
-        if ctx.author.id not in data["owners"]:
+        if ctx.author.id not in app_config["owners"]:
             raise UserNotOwner
         return True
 
     return commands.check(predicate)
 
 def is_admin() -> Callable[[T], T]:
+    """Checks to see if user is an administrator
+
+    Returns:
+        True if user is an administrator
+    """
     async def predicate(ctx: commands.Context) -> bool:
         if not ctx.author.guild_permissions.administrator:
             raise UserNotAdmin

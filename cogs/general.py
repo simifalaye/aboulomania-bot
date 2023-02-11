@@ -14,6 +14,10 @@ class General(commands.Cog, name="general"):
         self.timezone = pytz.timezone(app_config["timezone"])
         self.start_time = datetime.datetime.now(self.timezone)
 
+    """
+    Commands
+    """
+
     @commands.hybrid_command(
         name="help",
         description="List all commands the bot has loaded."
@@ -36,7 +40,7 @@ class General(commands.Cog, name="general"):
 
     @commands.hybrid_command(
         name="info",
-        description="Get some useful (or not) information about the bot.",
+        description="Get some information about the bot.",
     )
     async def info(self, ctx: Context) -> None:
         now = datetime.datetime.now(self.timezone)
@@ -79,7 +83,6 @@ class General(commands.Cog, name="general"):
             color=0xD75BF4
         )
         try:
-            # To know what permissions to give to your bot, please see here: https://discordapi.com/permissions.html and remember to not give Administrator permissions.
             await ctx.author.send(embed=embed)
             await ctx.send("I sent you a private message!")
         except discord.Forbidden:

@@ -46,8 +46,7 @@ async def on_ready() -> None:
 async def on_guild_join(guild: discord.Guild) -> None:
     if not await guildsdb.guild_exists(guild.id):
         logger.info("Adding guild to db: {}:{}".format(guild.id, guild.name))
-        await guildsdb.create_one_guild(
-                guild.id, -1, app_config["autodraw_weekday"], app_config["autodraw_hour"])
+        await guildsdb.create_one_guild(guild.id, -1, -1, -1)
 
 @bot.event
 async def on_guild_remove(guild: discord.Guild) -> None:

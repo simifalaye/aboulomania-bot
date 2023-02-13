@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import random
+import calendar
 from collections import defaultdict, Counter
 from dateutil import parser
 
@@ -22,20 +23,11 @@ class Draw(commands.Cog, name="draw"):
     def __init__(self, bot):
         self.bot = bot
         self.timezone = pytz.timezone(app_config["timezone"])
-        # TODO: Make auto draw times configurable per guild
-        self.autodraw_weekday = app_config["autodraw_weekday"]
-        self.autodraw_hour = app_config["autodraw_hour"]
-        self.task = None
+        self.autodraw_tasks = {}
 
     """
     Helper Methods
     """
-
-    def cog_unload(self) -> None:
-        """ Cog builtin function that runs when cog is unload """
-        if self.task:
-            logger.info("Stopping auto draw task")
-            self.task.cancel()
 
     async def run_draw(self, guild_id: int, channel_id: int):
         """Run draw and output results to channel
@@ -75,7 +67,7 @@ class Draw(commands.Cog, name="draw"):
             user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
                 # Remove winner from entry list
-                entries.remove(winner)
+                entries[:] = [e for e in entries if e.user_id != winner.user_id]
                 # Add entry to history table
                 await entryhistdb.create_entry_hist(winner.name, True, winner.guild_id, winner.user_id)
                 # Remove entry from entries table
@@ -106,6 +98,72 @@ class Draw(commands.Cog, name="draw"):
             # Remove entry from entries table
             await entriesdb.delete_all_entries_for_user_in_guild(entry.guild_id, entry.user_id)
 
+    async def autodraw(self, guild: guildsdb.RespGuild):
+        """Run the autodraw on schedule
+
+        Args:
+            guild: the guild db tuple
+        """
+        try:
+            # Wait till bot is ready
+            await self.bot.wait_until_ready()
+            # Run whil bot is still up
+            while not self.bot.is_closed():
+                # Sleep till next run
+                now = datetime.datetime.now(self.timezone)
+                task_time = now + datetime.timedelta((guild.autodraw_weekday - now.weekday()) % 7)
+                task_time = task_time.replace(hour=guild.autodraw_hour, minute=0, second=0, microsecond=0)
+                if task_time < datetime.datetime.now(self.timezone):
+                    task_time += datetime.timedelta(weeks=1)
+                logger.info(f'Autodraw for guild ({guild.id}), scheduled for {task_time.strftime("%A, %d %B %Y %H:%M:%S")}')
+                await asyncio.sleep((task_time - datetime.datetime.now(self.timezone)).total_seconds())
+                # Check if bot is still in guild, if not remove it from db
+                guildobj = discord.utils.get(self.bot.guilds, id=guild.id)
+                if not guildobj:
+                    logger.info("Deleting old, invalid guild: {}".format(guild.id))
+                    await guildsdb.delete_one_guild(guild.id)
+                    return
+                # Run draw on guild if channel is set
+                if guild.channel_id > 0:
+                    logger.info("Running autodraw for guild: {}".format(guild.id))
+                    await self.run_draw(guild.id, guild.channel_id)
+                else:
+                    logger.info("Can't run autodraw for guild: {}. Channel not set yet".format(guild.id))
+        except Exception as e:
+            logger.debug("Autodraw task exception: {}".format(e))
+            return
+
+    async def start_autodraw(self, guild: guildsdb.RespGuild):
+        """Start autodraw task for guild making sure to stop previous task first
+
+        Args:
+            guild: guild to start
+        """
+        # Stop first
+        await self.stop_autodraw(guild)
+        # Check if guild is configured for autodraw
+        if guild.channel_id > 0 and guild.autodraw_weekday > 0 and guild.autodraw_hour > 0:
+            logger.info("Starting auto draw task for guild: {}".format(guild.id))
+            self.autodraw_tasks[guild.id] = self.bot.loop.create_task(self.autodraw(guild))
+
+    async def stop_autodraw(self, guild: guildsdb.RespGuild):
+        """Stop autodraw task for guild
+
+        Args:
+            guild: guild to stop
+        """
+        if guild.id in self.autodraw_tasks and self.autodraw_tasks[guild.id] is not None:
+            logger.info("Stopping auto draw task for guild: {}".format(guild.id))
+            self.autodraw_tasks[guild.id].cancel()
+            self.autodraw_tasks[guild.id] = None
+
+    def cog_unload(self) -> None:
+        """ Cog builtin function that runs when cog is unload """
+        if self.autodraw_tasks:
+            for guild_id, task in self.autodraw_tasks.items():
+                logger.info("Stopping auto draw task for guild: {}".format(guild_id))
+                task.cancel()
+
     """
     Listeners
     """
@@ -113,28 +171,11 @@ class Draw(commands.Cog, name="draw"):
     @commands.Cog.listener()
     async def on_ready(self):
         """ Cog builtin that runs when the cog is ready """
-        async def scheduled_task():
-            await self.bot.wait_until_ready()
-            while not self.bot.is_closed():
-                # Sleep till next run
-                now = datetime.datetime.now(self.timezone)
-                task_time = now + datetime.timedelta((self.autodraw_weekday - now.weekday()) % 7)
-                task_time = task_time.replace(hour=self.autodraw_hour, minute=3, second=0, microsecond=0)
-                if task_time < datetime.datetime.now(self.timezone):
-                    task_time += datetime.timedelta(weeks=1)
-                logger.info(f'Autodraw scheduled for {task_time.strftime("%A, %d %B %Y %H:%M:%S")}')
-                await asyncio.sleep((task_time - datetime.datetime.now()).total_seconds())
-
-                # Run draw on all guilds
-                logger.info("Running autodraw")
-                guilds = await guildsdb.read_all_guilds()
-                if guilds:
-                    logger.info("Found guilds, running draw on each")
-                    for guild in guilds:
-                        if guild.channel_id > 0:
-                            await self.run_draw(guild.id, guild.channel_id)
-
-        self.task = self.bot.loop.create_task(scheduled_task())
+        # Add separate task for each guild
+        guilds = await guildsdb.read_all_guilds()
+        if guilds:
+            for guild in guilds:
+                await self.start_autodraw(guild)
 
     """
     Commands
@@ -151,17 +192,74 @@ class Draw(commands.Cog, name="draw"):
             return
 
         # Create or update guild
-        res = False
         if await guildsdb.guild_exists(ctx.guild.id):
-            res = await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, None, None)
+            await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, None, None)
         else:
-            res = await guildsdb.create_one_guild(
-                    ctx.guild.id, ctx.channel.id, app_config["autodraw_weekday"], app_config["autodraw_hour"])
-        # Respond
-        if res:
+            await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
+
+        if guild:
+            # Success
+            await self.start_autodraw(guild)
             await ctx.send('Successfully set this channel as listening channel.')
         else:
+            # Failed
             await ctx.send('Unable to set this channel as listening channel. Try again.')
+
+
+    @commands.hybrid_command(
+        name="draw_auto_enable",
+        description="(Admin) Enable autodraw weekly run (ex. !draw_ad_set <weekday(0-6)> <hour(0-23>)."
+    )
+    @checks.is_admin()
+    async def draw_auto_enable(self, ctx: Context, weekday: int, hour: int) -> None:
+        if not ctx.guild:
+            await ctx.send('Something went wrong. Try again later.')
+            return
+        if weekday < 0 or weekday > 6 or hour < 0 or hour > 23:
+            await ctx.send('<weekday> must be 0-6 and <hour> must be 0-23')
+            return
+
+        # Create or update guild
+        if await guildsdb.guild_exists(ctx.guild.id):
+            await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, weekday, hour)
+        else:
+            await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, weekday, hour)
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
+
+        if guild:
+            # Success
+            await self.start_autodraw(guild)
+            await ctx.send('Successfully enabled the autodraw to run every {} at {} ({} timezone)'.format(
+                calendar.day_name[weekday], hour, app_config["timezone"]))
+        else:
+            # Failed
+            await ctx.send('Unable to set autodraw schedule. Try again.')
+
+    @commands.hybrid_command(
+        name="draw_auto_disable",
+        description="(Admin) Disable autodraw"
+    )
+    @checks.is_admin()
+    async def draw_auto_disable(self, ctx: Context) -> None:
+        if not ctx.guild:
+            await ctx.send('Something went wrong. Try again later.')
+            return
+
+        # Create or update guild
+        if await guildsdb.guild_exists(ctx.guild.id):
+            await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
+        else:
+            await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
+
+        if guild:
+            # Success
+            await self.stop_autodraw(guild)
+            await ctx.send('Successfully disabled autodraw.')
+        else:
+            # Failed
+            await ctx.send('Unable to disable autodraw. Try again.')
 
     @commands.hybrid_command(
         name="draw_list",

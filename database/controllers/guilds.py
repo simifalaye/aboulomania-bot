@@ -92,7 +92,6 @@ async def update_one_guild(
             sql +=', '.join(updates)
             sql += " WHERE id=?"
             params.append(id)
-            print(sql, params, params)
 
             await db.execute(sql, tuple(params))
             await db.commit()

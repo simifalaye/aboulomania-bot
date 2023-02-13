@@ -88,6 +88,17 @@ async def delete_all_entry_hist() -> bool:
             logger.error(e)
             return False
 
+async def delete_all_entry_hist_for_guild(guild_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute("PRAGMA foreign_keys = ON")
+            await db.execute("DELETE FROM entry_hist WHERE guild_id=?", (guild_id,))
+            await db.commit()
+            return True
+        except Exception as e:
+            logger.error(e)
+            return False
+
 async def delete_all_entry_hist_for_user_in_guild(guild_id: int, user_id: int) -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
@@ -98,5 +109,3 @@ async def delete_all_entry_hist_for_user_in_guild(guild_id: int, user_id: int) -
         except Exception as e:
             logger.error(e)
             return False
-
-

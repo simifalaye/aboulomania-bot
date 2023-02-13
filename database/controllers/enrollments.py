@@ -87,4 +87,3 @@ async def delete_one_enrollment(guild_id: int, user_id: int) -> bool:
         except Exception as e:
             logger.error(e)
             return False
-

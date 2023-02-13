@@ -47,7 +47,7 @@ class Draw(commands.Cog, name="draw"):
             return
 
         async def draw(entries: list[entriesdb.RespEntry]) -> bool:
-            # Combine all entries into one list
+            # First choice gets two entries into the draw
             draw_list = []
             for entry in entries:
                 if entry.first:
@@ -70,8 +70,6 @@ class Draw(commands.Cog, name="draw"):
                 entries[:] = [e for e in entries if e.user_id != winner.user_id]
                 # Add entry to history table
                 await entryhistdb.create_entry_hist(winner.name, True, winner.guild_id, winner.user_id)
-                # Remove entry from entries table
-                await entriesdb.delete_all_entries_for_user_in_guild(winner.guild_id, winner.user_id)
                 # Output winner
                 await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
                 return True
@@ -90,13 +88,11 @@ class Draw(commands.Cog, name="draw"):
             await draw(entries)
         else:
             await channel.send('No more entries left for second draw.')
-
-        # Delete all other entries, winners have been selected for this draw
+        # Add losing entries to history table (entries list should only have losers after draw)
         for entry in entries:
-            # Add entry to history table
             await entryhistdb.create_entry_hist(entry.name, False, entry.guild_id, entry.user_id)
-            # Remove entry from entries table
-            await entriesdb.delete_all_entries_for_user_in_guild(entry.guild_id, entry.user_id)
+        # Delete all entries for guild (all should be added to the history now)
+        await entriesdb.delete_all_entries_for_guild(guild.id)
 
     async def autodraw(self, guild: guildsdb.RespGuild):
         """Run the autodraw on schedule
@@ -161,8 +157,9 @@ class Draw(commands.Cog, name="draw"):
         """ Cog builtin function that runs when cog is unload """
         if self.autodraw_tasks:
             for guild_id, task in self.autodraw_tasks.items():
-                logger.info("Stopping auto draw task for guild: {}".format(guild_id))
-                task.cancel()
+                if task is not None:
+                    logger.info("Stopping auto draw task for guild: {}".format(guild_id))
+                    task.cancel()
 
     """
     Listeners
@@ -231,7 +228,7 @@ class Draw(commands.Cog, name="draw"):
             # Success
             await self.start_autodraw(guild)
             await ctx.send('Successfully enabled the autodraw to run every {} at {} ({} timezone)'.format(
-                calendar.day_name[weekday], hour, app_config["timezone"]))
+                calendar.day_name[weekday], f"{hour%12 or 12} {'AM' if hour < 12 else 'PM'}", app_config["timezone"]))
         else:
             # Failed
             await ctx.send('Unable to set autodraw schedule. Try again.')

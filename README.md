@@ -40,8 +40,8 @@ available commands
     <str, List of owner id's for extra priviledges, default: []>
   ],
   "timezone": <str, Pytz timezone to use, default: Canada/Saskatchewan>,
-  "auto_draw_weekday": <int, weekday to run autodraw every week, default: 2(wednesday)>,
-  "auto_draw_hour": <int, hour to run the autodraw on the day, default: 19(7pm)>
+  "autodraw_weekday": <int, weekday to run autodraw every week, default: 2(wednesday)>,
+  "autodraw_hour": <int, hour to run the autodraw on the day, default: 19(7pm)>
 }
 ```
 

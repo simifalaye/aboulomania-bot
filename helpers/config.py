@@ -47,5 +47,5 @@ else:
         set_default(config, "prefix", str, "!")
         set_default(config, "timezone", str, "Canada/Saskatchewan")
         set_default(config, "owners", list, [])
-        set_default(config, "auto_draw_weekday", int, 2)
-        set_default(config, "auto_draw_hour", int, 19)
+        set_default(config, "autodraw_weekday", int, 2)
+        set_default(config, "autodraw_hour", int, 19)

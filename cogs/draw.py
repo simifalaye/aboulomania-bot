@@ -1,13 +1,20 @@
 import asyncio
 import datetime
 import random
+from collections import defaultdict, Counter
+from dateutil import parser
 
 import pytz
 import discord
 from discord.ext import commands
 from discord.ext.commands import Context
 
-from helpers import db, checks
+import database.controllers.guilds as guildsdb
+import database.controllers.entries as entriesdb
+import database.controllers.entry_hist as entryhistdb
+import database.controllers.users as usersdb
+import database.controllers.enrollments as enrollmentsdb
+from helpers import checks
 from helpers.logger import logger
 from helpers.config import config as app_config
 
@@ -15,9 +22,9 @@ class Draw(commands.Cog, name="draw"):
     def __init__(self, bot):
         self.bot = bot
         self.timezone = pytz.timezone(app_config["timezone"])
-        # TODO: Make auto draw times configurable per server
-        self.auto_draw_weekday = app_config["auto_draw_weekday"]
-        self.auto_draw_hour = app_config["auto_draw_hour"]
+        # TODO: Make auto draw times configurable per guild
+        self.autodraw_weekday = app_config["autodraw_weekday"]
+        self.autodraw_hour = app_config["autodraw_hour"]
         self.task = None
 
     """
@@ -30,69 +37,74 @@ class Draw(commands.Cog, name="draw"):
             logger.info("Stopping auto draw task")
             self.task.cancel()
 
-    async def run_draw(self, server_id: int, channel_id: int):
+    async def run_draw(self, guild_id: int, channel_id: int):
         """Run draw and output results to channel
 
         Args:
-            server_id: server to output to
+            guild_id: server to output to
             channel_id: channel to output to
         """
         # Get guild and channel objects
-        guild = discord.utils.get(self.bot.guilds, id=server_id)
+        guild = discord.utils.get(self.bot.guilds, id=guild_id)
         if not guild:
-            logger.error("Unable to find guild for guild id '{}'".format(server_id))
+            logger.error("Unable to find guild for guild id '{}'".format(guild_id))
             return
         channel = discord.utils.get(guild.text_channels, id=channel_id)
         if not channel:
             logger.error("Unable to find channel for channel id '{}'".format(channel_id))
             return
 
-        async def draw() -> bool:
-            # Gather entries
-            entries = await db.read_all_draw_entries_for_server(server_id)
-            if not entries:
-                return False
-            # First choice gets two entries
-            selection_list = sorted(
-                    [(x.user_id, x.first_choice) for x in entries] * 2 + \
-                            [(x.user_id, x.second_choice) for x in entries])
+        async def draw(entries: list[entriesdb.RespEntry]) -> bool:
+            # Combine all entries into one list
+            draw_list = []
+            for entry in entries:
+                if entry.first:
+                    draw_list.extend([entry, entry])
+                else:
+                    draw_list.append(entry)
             # Print list of entries being selected from
             list_str=""
-            for i, item in enumerate(selection_list, start=1):
-                user = discord.utils.get(guild.members, id=int(item[0]))
+            for i, item in enumerate(draw_list, start=1):
+                user = discord.utils.get(guild.members, id=int(item.user_id))
                 if user:
-                    list_str += f"{i}. {item[1]} ({user.name})\n"
+                    list_str += f"{i}. {item.name} ({user.name})\n"
             embed = discord.Embed(title="Selecting winner from list", description=list_str, color=0x00ff00)
             await channel.send(embed=embed)
             # Select winner
-            winner = random.choice(selection_list)
-            user = discord.utils.get(guild.members, id=int(winner[0]))
+            winner = random.choice(draw_list)
+            user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
                 # Remove winner from entry list
-                await db.delete_draw_entry(server_id, winner[0])
-                # Update stats
-                stat = await db.read_draw_stat(server_id, winner[0])
-                if not stat:
-                    await db.create_draw_stat(server_id, winner[0], self.timezone)
-                await db.update_draw_stat_win(server_id, winner[0], self.timezone)
+                entries.remove(winner)
+                # Add entry to history table
+                await entryhistdb.create_entry_hist(winner.name, True, winner.guild_id, winner.user_id)
+                # Remove entry from entries table
+                await entriesdb.delete_all_entries_for_user_in_guild(winner.guild_id, winner.user_id)
                 # Output winner
-                await channel.send('**Winner is "{}"** entered by {}.'.format(winner[1], user.mention))
+                await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
                 return True
             return False
 
         # Notify channel
-        now = datetime.datetime.now(self.timezone)
-        await channel.send('**Running the draw for {}**:'.format(now.strftime("%d/%m/%Y")))
-
-        # Draw two winners
-        if not await draw():
-            await channel.send('No entries to draw from. Please enter some first with "!draw_enter".')
+        await channel.send('**Running the draw**:')
+        # Read all entries
+        entries = await entriesdb.read_all_entries_for_guild(guild.id)
+        if not entries:
+            await channel.send('No entries found. Please enter some first with "!draw_enter".')
             return
-        if not await draw():
+        # Draw two winners
+        await draw(entries)
+        if entries:
+            await draw(entries)
+        else:
             await channel.send('No more entries left for second draw.')
 
         # Delete all other entries, winners have been selected for this draw
-        await db.delete_all_entries_for_server(server_id)
+        for entry in entries:
+            # Add entry to history table
+            await entryhistdb.create_entry_hist(entry.name, False, entry.guild_id, entry.user_id)
+            # Remove entry from entries table
+            await entriesdb.delete_all_entries_for_user_in_guild(entry.guild_id, entry.user_id)
 
     """
     Listeners
@@ -106,20 +118,21 @@ class Draw(commands.Cog, name="draw"):
             while not self.bot.is_closed():
                 # Sleep till next run
                 now = datetime.datetime.now(self.timezone)
-                task_time = now + datetime.timedelta((self.auto_draw_weekday - now.weekday()) % 7)
-                task_time = task_time.replace(hour=self.auto_draw_hour, minute=3, second=0, microsecond=0)
+                task_time = now + datetime.timedelta((self.autodraw_weekday - now.weekday()) % 7)
+                task_time = task_time.replace(hour=self.autodraw_hour, minute=3, second=0, microsecond=0)
                 if task_time < datetime.datetime.now(self.timezone):
                     task_time += datetime.timedelta(weeks=1)
                 logger.info(f'Autodraw scheduled for {task_time.strftime("%A, %d %B %Y %H:%M:%S")}')
                 await asyncio.sleep((task_time - datetime.datetime.now()).total_seconds())
 
-                # Run draw on all servers
+                # Run draw on all guilds
                 logger.info("Running autodraw")
-                server_configs = await db.read_all_server_configs()
-                if server_configs:
-                    logger.info("Found servers, running draw on each")
-                    for server_config in server_configs:
-                        await self.run_draw(server_config.server_id, server_config.channel_id)
+                guilds = await guildsdb.read_all_guilds()
+                if guilds:
+                    logger.info("Found guilds, running draw on each")
+                    for guild in guilds:
+                        if guild.channel_id > 0:
+                            await self.run_draw(guild.id, guild.channel_id)
 
         self.task = self.bot.loop.create_task(scheduled_task())
 
@@ -129,7 +142,7 @@ class Draw(commands.Cog, name="draw"):
 
     @commands.hybrid_command(
         name="draw_listen",
-        description="Choose this channel as the listening channel for draw commands."
+        description="(Admin) Choose this channel as the listening channel for draw commands."
     )
     @checks.is_admin()
     async def draw_listen(self, ctx: Context) -> None:
@@ -137,20 +150,18 @@ class Draw(commands.Cog, name="draw"):
             await ctx.send('Something went wrong. Try again later.')
             return
 
-        server_id = ctx.guild.id
-        channel_id = ctx.channel.id
-        # Create or update server config
-        config = await db.read_server_config(server_id)
-        if config:
-            if not await db.update_server_config(server_id, channel_id):
-                await ctx.send('Unable to set this channel as listening channel. Try again later.')
-                return
+        # Create or update guild
+        res = False
+        if await guildsdb.guild_exists(ctx.guild.id):
+            res = await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, None, None)
         else:
-            if not await db.create_server_config(server_id, channel_id):
-                await ctx.send('Unable to set this channel as listening channel. Try again later.')
-                return
-
-        await ctx.send('Successfully set this channel as listening channel.')
+            res = await guildsdb.create_one_guild(
+                    ctx.guild.id, ctx.channel.id, app_config["autodraw_weekday"], app_config["autodraw_hour"])
+        # Respond
+        if res:
+            await ctx.send('Successfully set this channel as listening channel.')
+        else:
+            await ctx.send('Unable to set this channel as listening channel. Try again.')
 
     @commands.hybrid_command(
         name="draw_list",
@@ -163,19 +174,23 @@ class Draw(commands.Cog, name="draw"):
             return
 
         # Read all entries
-        entries = await db.read_all_draw_entries_for_server(ctx.guild.id)
+        entries = await entriesdb.read_all_entries_for_guild(ctx.guild.id)
         if not entries:
             await ctx.send('No entries found. Please enter some first with "!draw_enter".')
             return
+        # Group entries by user
+        user_entries = defaultdict(list)
+        for entry in entries:
+            user_entries[entry.user_id].append(entry)
         # Print draw entries table
         embed = discord.Embed(title="Draw Entries", color=0x00ff00)
-        for entry in entries:
-            user = discord.utils.get(ctx.guild.members, id=int(entry.user_id))
+        for user_id, entries in user_entries.items():
+            user = discord.utils.get(ctx.guild.members, id=int(user_id))
             if user:
                 name = user.name
-                first_choice = entry.first_choice
-                second_choice = entry.second_choice
-                embed.add_field(name=name, value=f"Choice 1: {first_choice}\nChoice 2: {second_choice}", inline=True)
+                first_choice = next((x.name for x in entries if x.first), "")
+                second_choice = next((x.name for x in entries if not x.first), "")
+                embed.add_field(name=name, value=f"1: {first_choice}\n2: {second_choice}", inline=True)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(
@@ -187,26 +202,36 @@ class Draw(commands.Cog, name="draw"):
         if not ctx.guild or not ctx.author:
             await ctx.send('Something went wrong. Try again later.')
             return
+        err_msg = "Unable to create the draw entry. Please try again."
 
-        server_id = ctx.guild.id
-        user_id = ctx.author.id
-        # Create or update a draw entry (each user only gets one entry)
-        entry = await db.read_draw_entry(server_id, user_id)
-        if entry:
-            await db.update_draw_entry(server_id, user_id, choice1, choice2)
-        else:
-            if not await db.create_draw_entry(server_id, user_id, choice1, choice2):
-                await ctx.send('Unable to create the draw entry. Please try again.')
+        # Create or update user
+        if not await usersdb.user_exists(ctx.author.id):
+            if not await usersdb.create_one_user(ctx.author.id):
+                await ctx.send(err_msg)
+                return
+        # Create enrollment
+        if not await enrollmentsdb.enrollment_exists(ctx.guild.id, ctx.author.id):
+            if not await enrollmentsdb.create_one_enrollment(ctx.guild.id, ctx.author.id):
+                await ctx.send(err_msg)
+                return
+        # Remove old entries
+        if not await entriesdb.delete_all_entries_for_user_in_guild(ctx.guild.id, ctx.author.id):
+            await ctx.send(err_msg)
+            return
+        # Create new entries
+        if not await entriesdb.create_one_entry(choice1.lower(), True, ctx.guild.id, ctx.author.id) or \
+                not await entriesdb.create_one_entry(choice2.lower(), False, ctx.guild.id, ctx.author.id):
+            await ctx.send(err_msg)
+            return
 
         # Success
-        response = '{} has entered their picks into the draw: "**{}**" and "**{}**".'.format(
-                ctx.author.mention, choice1, choice2)
-        await ctx.send(response)
+        await ctx.send('{} has entered their picks into the draw: "**{}**" and "**{}**".'.format(
+            ctx.author.mention, choice1, choice2))
 
 
     @commands.hybrid_command(
         name="draw_now",
-        description="Immediately run the draw for the current entries."
+        description="(Admin) Immediately run the draw for the current entries."
     )
     @checks.is_admin()
     @checks.channel_set()
@@ -218,31 +243,87 @@ class Draw(commands.Cog, name="draw"):
         await self.run_draw(ctx.guild.id, ctx.channel.id)
 
     @commands.hybrid_command(
-        name="draw_stats",
+        name="draw_user_stats",
         description="Print the draw stats for each user."
     )
     @checks.channel_set()
-    async def draw_stats(self, ctx: Context) -> None:
+    async def draw_user_stats(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
             return
 
-        server_id = ctx.guild.id
-        stats = await db.read_all_draw_stats_for_server(server_id)
-        if not stats:
-            await ctx.send('No stats found. Please run a draw first with "!draw_now".')
+        # Read all entries history
+        entry_hist = await entryhistdb.read_all_entry_hist_for_guild(ctx.guild.id)
+        if not entry_hist:
+            await ctx.send('No user stats found. Please run a draw first with "!draw_now".')
+            return
+        # Group entries by user
+        user_entry_hist = defaultdict(list)
+        for entry in entry_hist:
+            user_entry_hist[entry.user_id].append(entry)
+        # Print stats
+        embed = discord.Embed(title="Historical User Stats", color=0x00ff00)
+        for user_id, entries in user_entry_hist.items():
+            user = discord.utils.get(ctx.guild.members, id=int(user_id))
+            if user:
+                # name
+                name = user.name
+                # wins
+                wins = len([e for e in entries if e.won])
+                # most common picks
+                counter = Counter([entry.name for entry in entries])
+                most_common_entry, most_common_count = counter.most_common(1)[0]
+                # last win date
+                datetime_objects = [parser.parse(x.created_at) for x in entries]
+                last_win = max(datetime_objects)
+                last_win_str = last_win.strftime("%m/%d/%Y")
+                # summary
+                embed.add_field(
+                        name=name,
+                        value=f"Wins: {wins}\nFavorite: {most_common_entry} ({most_common_count})\nLast win: {last_win_str}",
+                        inline=False)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="draw_entry_stats",
+        description="Print the draw stats for each entry."
+    )
+    @checks.channel_set()
+    async def draw_entry_stats(self, ctx: Context) -> None:
+        if not ctx.guild:
+            await ctx.send('Something went wrong. Try again later.')
             return
 
-        # Generate draw stats table and output
-        embed = discord.Embed(title="Historical Draw Stats", color=0x00ff00)
-        for stat in stats:
-            user = discord.utils.get(ctx.guild.members, id=int(stat.user_id))
+        # Read all entries history
+        entry_hist = await entryhistdb.read_all_entry_hist_for_guild(ctx.guild.id)
+        if not entry_hist:
+            await ctx.send('No user stats found. Please run a draw first with "!draw_now".')
+            return
+        # Group entries by entry name
+        entry_name_hist = defaultdict(list)
+        for entry in entry_hist:
+            entry_name_hist[entry.name].append(entry)
+        # Print stats
+        embed = discord.Embed(title="Historical Entry Stats", color=0x00ff00)
+        for name, entries in entry_name_hist.items():
+            # most picked by user
+            counter = Counter([entry.user_id for entry in entries])
+            most_picked_by, most_picked_by_count = counter.most_common(1)[0]
+            username = ""
+            user = discord.utils.get(ctx.guild.members, id=int(most_picked_by))
             if user:
-                name = user.name
-                wins = stat.num_wins
-                last_win = stat.last_win_date
-                last_win = last_win.split(' ', 1)[0]
-                embed.add_field(name=name, value=f"Wins: {wins}\nLast Win: {last_win}", inline=False)
+                username = user.name
+            # wins
+            wins = len([e for e in entries if e.won])
+            # last picked date
+            datetime_objects = [parser.parse(x.created_at) for x in entries]
+            last_win = max(datetime_objects)
+            last_win_str = last_win.strftime("%m/%d/%Y")
+            # summary
+            embed.add_field(
+                    name=name,
+                    value=f"Wins: {wins}\nBiggest fan: {username} ({most_picked_by_count})\nLast win: {last_win_str}",
+                    inline=False)
         await ctx.send(embed=embed)
 
 async def setup(bot):

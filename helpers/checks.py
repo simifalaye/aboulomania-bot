@@ -3,8 +3,8 @@ from typing import Callable, TypeVar
 import discord
 from discord.ext import commands
 
+import database.controllers.guilds as guildsdb
 from exceptions import *
-from helpers import db
 from helpers.config import config as app_config
 
 T = TypeVar("T")
@@ -17,7 +17,7 @@ def channel_set() -> Callable[[T], T]:
     """
     async def predicate(ctx: commands.Context) -> bool:
         if ctx.guild:
-            entry = await db.read_server_config(ctx.guild.id)
+            entry = await guildsdb.read_one_guild(ctx.guild.id)
             if entry:
                 channel = discord.utils.get(ctx.guild.text_channels, id=entry.channel_id)
                 if channel and channel.id == ctx.channel.id:

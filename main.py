@@ -7,6 +7,7 @@ from discord.ext import commands
 from discord.ext.commands import Bot, Context
 
 import exceptions
+import database.controllers.guilds as guildsdb
 from helpers import db
 from helpers.logger import logger
 from helpers.config import config as app_config
@@ -40,6 +41,18 @@ async def on_ready() -> None:
     logger.info(f"Python version: {platform.python_version()}")
     logger.info(
         f"Running on: {platform.system()} {platform.release()} ({os.name})")
+
+@bot.event
+async def on_guild_join(guild: discord.Guild) -> None:
+    if not await guildsdb.guild_exists(guild.id):
+        logger.info("Adding guild to db: {}:{}".format(guild.id, guild.name))
+        await guildsdb.create_one_guild(
+                guild.id, -1, app_config["autodraw_weekday"], app_config["autodraw_hour"])
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild) -> None:
+    logger.info("Deleting guild from db: {}:{}".format(guild.id, guild.name))
+    await guildsdb.delete_one_guild(guild.id)
 
 @bot.event
 async def on_message(message: discord.Message) -> None:

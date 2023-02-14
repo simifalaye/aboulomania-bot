@@ -75,7 +75,25 @@ async def on_command_completion(ctx: Context) -> None:
 
 @bot.event
 async def on_command_error(ctx: Context, error) -> None:
-    if isinstance(error, exceptions.UserNotOwner):
+    if isinstance(error, exceptions.ChannelNotSet):
+        """
+        @checks.channel_set() check.
+        """
+        embed = discord.Embed(
+            description="Bot has not been configured to listen to this channel. See '!draw_listen'",
+            color=0xE02B2B
+        )
+        await ctx.send(embed=embed)
+    elif isinstance(error, exceptions.NotInGuild):
+        """
+        @checks.in_guild() check.
+        """
+        embed = discord.Embed(
+            description="This command is only available in a server channel!",
+            color=0xE02B2B
+        )
+        await ctx.send(embed=embed)
+    elif isinstance(error, exceptions.UserNotOwner):
         """
         @checks.is_owner() check.
         """
@@ -84,8 +102,10 @@ async def on_command_error(ctx: Context, error) -> None:
             color=0xE02B2B
         )
         await ctx.send(embed=embed)
+        guild_name = ctx.guild and ctx.guild.name or ""
+        guild_id = ctx.guild and ctx.guild.id or ""
         logger.warning(
-            f"{ctx.author} (ID: A non-owner user {ctx.author.id}) tried to execute an owner only command in the guild {ctx.guild.name} (ID: {ctx.guild.id}).")
+            f"{ctx.author} (ID: A non-owner user {ctx.author.id}) tried to execute an owner only command in the guild {guild_name} (ID: {guild_id}).")
     elif isinstance(error, exceptions.UserNotAdmin):
         """
         @checks.is_admin() check.
@@ -95,8 +115,10 @@ async def on_command_error(ctx: Context, error) -> None:
             color=0xE02B2B
         )
         await ctx.send(embed=embed)
+        guild_name = ctx.guild and ctx.guild.name or ""
+        guild_id = ctx.guild and ctx.guild.id or ""
         logger.warning(
-                f"{ctx.author} (ID: A non-admin user {ctx.author.id}) tried to execute an admin only command in the guild {ctx.guild.name} (ID: {ctx.guild.id}).")
+                f"{ctx.author} (ID: A non-admin user {ctx.author.id}) tried to execute an admin only command in the guild {guild_name} (ID: {guild_id}).")
     elif isinstance(error, commands.CommandOnCooldown):
         minutes, seconds = divmod(error.retry_after, 60)
         hours, minutes = divmod(minutes, 60)

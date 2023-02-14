@@ -42,6 +42,7 @@ class General(commands.Cog, name="general"):
         name="info",
         description="(Admin) Get some information about the bot.",
     )
+    @checks.in_guild()
     async def info(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -85,6 +86,7 @@ class General(commands.Cog, name="general"):
         description="Get the invite link of the bot to be able to invite it.",
     )
     @checks.is_admin()
+    @checks.in_guild()
     async def invite(self, ctx: Context) -> None:
         embed = discord.Embed(
             description=f"Invite me by clicking [here](https://discordapp.com/oauth2/authorize?&client_id={app_config['application_id']}&scope=bot+applications.commands&permissions={app_config['permissions']}).",

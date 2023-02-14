@@ -183,6 +183,7 @@ class Draw(commands.Cog, name="draw"):
         description="(Admin) Choose this channel as the listening channel for draw commands."
     )
     @checks.is_admin()
+    @checks.in_guild()
     async def draw_listen(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -206,9 +207,11 @@ class Draw(commands.Cog, name="draw"):
 
     @commands.hybrid_command(
         name="draw_auto_enable",
-        description="(Admin) Enable autodraw weekly run (ex. !draw_ad_set <weekday(0-6)> <hour(0-23>)."
+        description="(Admin) Enable autodraw weekly run (ex. !draw_auto_enable <weekday(0-6)> <hour(0-23>)."
     )
     @checks.is_admin()
+    @checks.channel_set()
+    @checks.in_guild()
     async def draw_auto_enable(self, ctx: Context, weekday: int, hour: int) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -219,9 +222,9 @@ class Draw(commands.Cog, name="draw"):
 
         # Create or update guild
         if await guildsdb.guild_exists(ctx.guild.id):
-            await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, weekday, hour)
+            await guildsdb.update_one_guild(ctx.guild.id, None, weekday, hour)
         else:
-            await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, weekday, hour)
+            await guildsdb.create_one_guild(ctx.guild.id, -1, weekday, hour)
         guild = await guildsdb.read_one_guild(ctx.guild.id)
 
         if guild:
@@ -238,6 +241,8 @@ class Draw(commands.Cog, name="draw"):
         description="(Admin) Disable autodraw"
     )
     @checks.is_admin()
+    @checks.channel_set()
+    @checks.in_guild()
     async def draw_auto_disable(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -245,9 +250,9 @@ class Draw(commands.Cog, name="draw"):
 
         # Create or update guild
         if await guildsdb.guild_exists(ctx.guild.id):
-            await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
+            await guildsdb.update_one_guild(ctx.guild.id, None, -1, -1)
         else:
-            await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
+            await guildsdb.create_one_guild(ctx.guild.id, -1, -1, -1)
         guild = await guildsdb.read_one_guild(ctx.guild.id)
 
         if guild:
@@ -263,6 +268,7 @@ class Draw(commands.Cog, name="draw"):
         description="List the entries in the draw for the week."
     )
     @checks.channel_set()
+    @checks.in_guild()
     async def draw_list(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -293,6 +299,7 @@ class Draw(commands.Cog, name="draw"):
         description="Enter the draw (ex. !draw_enter <choice1> <choice2>)."
     )
     @checks.channel_set()
+    @checks.in_guild()
     async def draw_enter(self, ctx: Context, choice1: str, choice2: str) -> None:
         if not ctx.guild or not ctx.author:
             await ctx.send('Something went wrong. Try again later.')
@@ -323,6 +330,19 @@ class Draw(commands.Cog, name="draw"):
         await ctx.send('{} has entered their picks into the draw: "**{}**" and "**{}**".'.format(
             ctx.author.mention, choice1, choice2))
 
+    @commands.hybrid_command(
+        name="draw_leave",
+        description="Leave the draw (remove your entries)."
+    )
+    @checks.channel_set()
+    @checks.in_guild()
+    async def draw_leave(self, ctx: Context) -> None:
+        if not ctx.guild or not ctx.author:
+            await ctx.send('Something went wrong. Try again later.')
+            return
+
+        await entriesdb.delete_all_entries_for_user_in_guild(ctx.guild.id, ctx.author.id)
+        await ctx.send('Removed your entries from the draw.')
 
     @commands.hybrid_command(
         name="draw_now",
@@ -330,6 +350,7 @@ class Draw(commands.Cog, name="draw"):
     )
     @checks.is_admin()
     @checks.channel_set()
+    @checks.in_guild()
     async def draw_now(self, ctx: Context) -> None:
         if not ctx.guild or not ctx.channel:
             await ctx.send('Something went wrong. Try again later.')
@@ -342,6 +363,7 @@ class Draw(commands.Cog, name="draw"):
         description="Print the draw stats for each user."
     )
     @checks.channel_set()
+    @checks.in_guild()
     async def draw_user_stats(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')
@@ -384,6 +406,7 @@ class Draw(commands.Cog, name="draw"):
         description="Print the draw stats for each entry."
     )
     @checks.channel_set()
+    @checks.in_guild()
     async def draw_entry_stats(self, ctx: Context) -> None:
         if not ctx.guild:
             await ctx.send('Something went wrong. Try again later.')

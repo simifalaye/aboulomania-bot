@@ -22,8 +22,20 @@ def channel_set() -> Callable[[T], T]:
                 channel = discord.utils.get(ctx.guild.text_channels, id=entry.channel_id)
                 if channel and channel.id == ctx.channel.id:
                     return True
-        await ctx.send("Bot has not been configured to listen to this channel. See '!draw_listen'")
-        return False
+        raise ChannelNotSet
+
+    return commands.check(predicate)
+
+def in_guild() -> Callable[[T], T]:
+    """Checks to see if request is comming from a guild channel an not DMs
+
+    Returns:
+        True if it is coming from a guild channel
+    """
+    async def predicate(ctx: commands.Context) -> bool:
+        if not ctx.guild:
+            raise NotInGuild
+        return True
 
     return commands.check(predicate)
 

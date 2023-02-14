@@ -9,7 +9,7 @@ from helpers.config import config as app_config
 
 T = TypeVar("T")
 
-def channel_set() -> Callable[[T], T]:
+def in_channel() -> Callable[[T], T]:
     """Checks to see if request is comming from the configured listening channel
 
     Returns:
@@ -22,7 +22,7 @@ def channel_set() -> Callable[[T], T]:
                 channel = discord.utils.get(ctx.guild.text_channels, id=entry.channel_id)
                 if channel and channel.id == ctx.channel.id:
                     return True
-        raise ChannelNotSet
+        raise NotInChannel
 
     return commands.check(predicate)
 

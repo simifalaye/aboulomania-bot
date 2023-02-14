@@ -66,13 +66,16 @@ class Draw(commands.Cog, name="draw"):
             winner = random.choice(draw_list)
             user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
-                # Remove winner from entry list
+                # Remove winner's entries from list
                 entries[:] = [e for e in entries if e.user_id != winner.user_id]
                 # Add entry to history table
                 await entryhistdb.create_entry_hist(winner.name, True, winner.guild_id, winner.user_id)
                 # Output winner
                 await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
                 return True
+            # Handle error
+            await channel.send('Unable to draw a winner. Something went wrong')
+            logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
             return False
 
         # Notify channel
@@ -103,17 +106,18 @@ class Draw(commands.Cog, name="draw"):
         try:
             # Wait till bot is ready
             await self.bot.wait_until_ready()
-            # Run whil bot is still up
+            # Run while bot is still up
             while not self.bot.is_closed():
-                # Sleep till next run
+                # Calculate when the next run should be based on the autodraw schedule
                 now = datetime.datetime.now(self.timezone)
                 task_time = now + datetime.timedelta((guild.autodraw_weekday - now.weekday()) % 7)
                 task_time = task_time.replace(hour=guild.autodraw_hour, minute=0, second=0, microsecond=0)
-                if task_time < datetime.datetime.now(self.timezone):
+                if task_time < datetime.datetime.now(self.timezone): # If day has already pass, move one week forward
                     task_time += datetime.timedelta(weeks=1)
+                # Sleep till the next run time
                 logger.info(f'Autodraw for guild ({guild.id}), scheduled for {task_time.strftime("%A, %d %B %Y %H:%M:%S")}')
                 await asyncio.sleep((task_time - datetime.datetime.now(self.timezone)).total_seconds())
-                # Check if bot is still in guild, if not remove it from db
+                # Check if bot is still in guild, if not remove it from db (guild must have not been removed from db)
                 guildobj = discord.utils.get(self.bot.guilds, id=guild.id)
                 if not guildobj:
                     logger.info("Deleting old, invalid guild: {}".format(guild.id))
@@ -136,30 +140,29 @@ class Draw(commands.Cog, name="draw"):
             guild: guild to start
         """
         # Stop first
-        await self.stop_autodraw(guild)
+        await self.stop_autodraw(guild.id)
         # Check if guild is configured for autodraw
         if guild.channel_id > 0 and guild.autodraw_weekday > 0 and guild.autodraw_hour > 0:
             logger.info("Starting auto draw task for guild: {}".format(guild.id))
             self.autodraw_tasks[guild.id] = self.bot.loop.create_task(self.autodraw(guild))
 
-    async def stop_autodraw(self, guild: guildsdb.RespGuild):
+    async def stop_autodraw(self, guild_id: int):
         """Stop autodraw task for guild
 
         Args:
             guild: guild to stop
         """
-        if guild.id in self.autodraw_tasks and self.autodraw_tasks[guild.id] is not None:
-            logger.info("Stopping auto draw task for guild: {}".format(guild.id))
-            self.autodraw_tasks[guild.id].cancel()
-            self.autodraw_tasks[guild.id] = None
+        if guild_id in self.autodraw_tasks and self.autodraw_tasks[guild_id] is not None:
+            logger.info("Stopping auto draw task for guild: {}".format(guild_id))
+            self.autodraw_tasks[guild_id].cancel()
+            self.autodraw_tasks[guild_id] = None
 
-    def cog_unload(self) -> None:
+    async def cog_unload(self) -> None:
         """ Cog builtin function that runs when cog is unload """
         if self.autodraw_tasks:
             for guild_id, task in self.autodraw_tasks.items():
                 if task is not None:
-                    logger.info("Stopping auto draw task for guild: {}".format(guild_id))
-                    task.cancel()
+                    await self.stop_autodraw(guild_id)
 
     """
     Listeners
@@ -194,8 +197,8 @@ class Draw(commands.Cog, name="draw"):
             await guildsdb.update_one_guild(ctx.guild.id, ctx.channel.id, None, None)
         else:
             await guildsdb.create_one_guild(ctx.guild.id, ctx.channel.id, -1, -1)
-        guild = await guildsdb.read_one_guild(ctx.guild.id)
 
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
         if guild:
             # Success
             await self.start_autodraw(guild)
@@ -210,7 +213,6 @@ class Draw(commands.Cog, name="draw"):
         description="(Admin) Enable autodraw weekly run (ex. !draw_auto_enable <weekday(0-6)> <hour(0-23>)."
     )
     @checks.is_admin()
-    @checks.channel_set()
     @checks.in_guild()
     async def draw_auto_enable(self, ctx: Context, weekday: int, hour: int) -> None:
         if not ctx.guild:
@@ -225,8 +227,8 @@ class Draw(commands.Cog, name="draw"):
             await guildsdb.update_one_guild(ctx.guild.id, None, weekday, hour)
         else:
             await guildsdb.create_one_guild(ctx.guild.id, -1, weekday, hour)
-        guild = await guildsdb.read_one_guild(ctx.guild.id)
 
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
         if guild:
             # Success
             await self.start_autodraw(guild)
@@ -241,7 +243,6 @@ class Draw(commands.Cog, name="draw"):
         description="(Admin) Disable autodraw"
     )
     @checks.is_admin()
-    @checks.channel_set()
     @checks.in_guild()
     async def draw_auto_disable(self, ctx: Context) -> None:
         if not ctx.guild:
@@ -253,11 +254,11 @@ class Draw(commands.Cog, name="draw"):
             await guildsdb.update_one_guild(ctx.guild.id, None, -1, -1)
         else:
             await guildsdb.create_one_guild(ctx.guild.id, -1, -1, -1)
-        guild = await guildsdb.read_one_guild(ctx.guild.id)
 
+        guild = await guildsdb.read_one_guild(ctx.guild.id)
         if guild:
             # Success
-            await self.stop_autodraw(guild)
+            await self.stop_autodraw(guild.id)
             await ctx.send('Successfully disabled autodraw.')
         else:
             # Failed
@@ -267,7 +268,7 @@ class Draw(commands.Cog, name="draw"):
         name="draw_list",
         description="List the entries in the draw for the week."
     )
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_list(self, ctx: Context) -> None:
         if not ctx.guild:
@@ -298,20 +299,20 @@ class Draw(commands.Cog, name="draw"):
         name="draw_enter",
         description="Enter the draw (ex. !draw_enter <choice1> <choice2>)."
     )
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_enter(self, ctx: Context, choice1: str, choice2: str) -> None:
         if not ctx.guild or not ctx.author:
             await ctx.send('Something went wrong. Try again later.')
             return
-        err_msg = "Unable to create the draw entry. Please try again."
 
-        # Create or update user
+        err_msg = "Unable to create the draw entry. Please try again."
+        # Create user if not exists
         if not await usersdb.user_exists(ctx.author.id):
             if not await usersdb.create_one_user(ctx.author.id):
                 await ctx.send(err_msg)
                 return
-        # Create enrollment
+        # Create enrollment if not exists
         if not await enrollmentsdb.enrollment_exists(ctx.guild.id, ctx.author.id):
             if not await enrollmentsdb.create_one_enrollment(ctx.guild.id, ctx.author.id):
                 await ctx.send(err_msg)
@@ -320,7 +321,7 @@ class Draw(commands.Cog, name="draw"):
         if not await entriesdb.delete_all_entries_for_user_in_guild(ctx.guild.id, ctx.author.id):
             await ctx.send(err_msg)
             return
-        # Create new entries
+        # Create new entries (set all entries to lowercase for matching entries later)
         if not await entriesdb.create_one_entry(choice1.lower(), True, ctx.guild.id, ctx.author.id) or \
                 not await entriesdb.create_one_entry(choice2.lower(), False, ctx.guild.id, ctx.author.id):
             await ctx.send(err_msg)
@@ -334,7 +335,7 @@ class Draw(commands.Cog, name="draw"):
         name="draw_leave",
         description="Leave the draw (remove your entries)."
     )
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_leave(self, ctx: Context) -> None:
         if not ctx.guild or not ctx.author:
@@ -349,7 +350,7 @@ class Draw(commands.Cog, name="draw"):
         description="(Admin) Immediately run the draw for the current entries."
     )
     @checks.is_admin()
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_now(self, ctx: Context) -> None:
         if not ctx.guild or not ctx.channel:
@@ -362,7 +363,7 @@ class Draw(commands.Cog, name="draw"):
         name="draw_user_stats",
         description="Print the draw stats for each user."
     )
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_user_stats(self, ctx: Context) -> None:
         if not ctx.guild:
@@ -405,7 +406,7 @@ class Draw(commands.Cog, name="draw"):
         name="draw_entry_stats",
         description="Print the draw stats for each entry."
     )
-    @checks.channel_set()
+    @checks.in_channel()
     @checks.in_guild()
     async def draw_entry_stats(self, ctx: Context) -> None:
         if not ctx.guild:

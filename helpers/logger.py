@@ -1,6 +1,8 @@
 import logging
 import logging.handlers
 
+LOG_FILE_NAME = 'logs/app.log'
+
 """
 Setup logger
 """
@@ -15,7 +17,7 @@ def setup_logger():
 
     # Define the file handler
     file_handler = logging.handlers.TimedRotatingFileHandler(
-        filename='logs/app.log', when='midnight', backupCount=5
+        filename=LOG_FILE_NAME, when='midnight', backupCount=5
     )
     file_handler_formatter = logging.Formatter(
         "[{asctime}] [{levelname:<8}] {name}: {message}", "%Y-%m-%d %H:%M:%S", style="{")

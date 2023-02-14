@@ -1,6 +1,6 @@
 from discord.ext import commands
 
-class ChannelNotSet(commands.CheckFailure):
+class NotInChannel(commands.CheckFailure):
     """
     Thrown when a user is attempting a command on a channel that the bot doesn't know about
     """

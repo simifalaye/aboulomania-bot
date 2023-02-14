@@ -9,7 +9,10 @@ from discord.ext import commands
 from discord.ext.commands import Context
 
 from helpers import checks
+from helpers.logger import logger, LOG_FILE_NAME
 from helpers.config import config as app_config
+
+MAX_LOG_LINES = 50
 
 class Owner(commands.Cog, name="owner"):
     def __init__(self, bot):
@@ -61,10 +64,6 @@ class Owner(commands.Cog, name="owner"):
     )
     @checks.is_owner()
     async def owner_info(self, ctx: Context) -> None:
-        if not ctx.guild:
-            await ctx.send('Something went wrong. Try again later.')
-            return
-
         # Uptime
         now = datetime.datetime.now(self.timezone)
         delta = now - self.start_time
@@ -108,6 +107,40 @@ class Owner(commands.Cog, name="owner"):
             text=f"Requested by {ctx.author}"
         )
         await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="owner_show_logs",
+        description="Show the latest bot logs (!owner_show_logs <num_lines>).",
+    )
+    @checks.is_owner()
+    async def owner_show_logs(self, ctx: Context, num_lines: int) -> None:
+        if num_lines > MAX_LOG_LINES:
+            await ctx.send('Can only show up to a maximum of {} lines.'.format(MAX_LOG_LINES))
+            return
+
+        current_directory = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(current_directory, "..", LOG_FILE_NAME)
+        try:
+            with open(log_file, 'r') as file:
+                lines = file.readlines()
+                last_lines = lines[-num_lines:]
+                output = ""
+                lines_per_chunk = 10
+                for i, line in enumerate(last_lines, start=1):
+                    # Send output in 5 line chucks (discord message content limitation)
+                    output += f'{line.strip()}\n'
+                    if i % lines_per_chunk == 0:
+                        await ctx.send(f'```{output}```')
+                        output = ""
+                # Send the last lines if there are more
+                if output:
+                    await ctx.send(f'```{output}```')
+        except FileNotFoundError as e:
+            logger.error(e)
+            await ctx.send("File not found!")
+        except Exception as e:
+            logger.error(e)
+            await ctx.send("An error occurred while reading the file.")
 
 async def setup(bot):
     await bot.add_cog(Owner(bot))

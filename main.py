@@ -75,9 +75,9 @@ async def on_command_completion(ctx: Context) -> None:
 
 @bot.event
 async def on_command_error(ctx: Context, error) -> None:
-    if isinstance(error, exceptions.ChannelNotSet):
+    if isinstance(error, exceptions.NotInChannel):
         """
-        @checks.channel_set() check.
+        @checks.in_channel() check.
         """
         embed = discord.Embed(
             description="Bot has not been configured to listen to this channel. See '!draw_listen'",

@@ -46,14 +46,10 @@ class Draw(commands.Cog, name="draw"):
             logger.error("Unable to find channel for channel id '{}'".format(channel_id))
             return
 
-        async def draw(entries: list[entriesdb.RespEntry]) -> bool:
-            # First choice gets two entries into the draw
-            draw_list = []
-            for entry in entries:
-                if entry.first:
-                    draw_list.extend([entry, entry])
-                else:
-                    draw_list.append(entry)
+        async def draw(l: list[entriesdb.RespEntry]) -> entriesdb.RespEntry | None:
+            if not l:
+                await channel.send("No more entries to draw from.")
+                return None
             # Print list of entries being selected from
             list_str=""
             for i, item in enumerate(draw_list, start=1):
@@ -66,36 +62,43 @@ class Draw(commands.Cog, name="draw"):
             winner = random.choice(draw_list)
             user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
-                # Remove winner's entries from list
-                entries[:] = [e for e in entries if e.user_id != winner.user_id]
-                # Add entry to history table
-                await entryhistdb.create_entry_hist(winner.name, True, winner.guild_id, winner.user_id)
+                # RULE: If a user wins, their entries are removed from the draw_list
+                # RULE: Each unique pick can only win once so remove other entries from the draw_list
+                l[:] = [e for e in l if e.user_id != winner.user_id and e.name != winner.name]
                 # Output winner
                 await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
-                return True
+                return winner
             # Handle error
             await channel.send('Unable to draw a winner. Something went wrong')
             logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
-            return False
+            return None
 
         # Notify channel
-        await channel.send('**Running the draw**:')
+        await channel.send('**Running the draw and selecting two winners**:')
         # Read all entries
         entries = await entriesdb.read_all_entries_for_guild(guild.id)
         if not entries:
             await channel.send('No entries found. Please enter some first with "!draw_enter".')
             return
-        # Draw two winners
-        await draw(entries)
-        if entries:
-            await draw(entries)
-        else:
-            await channel.send('No more entries left for second draw.')
-        # Add losing entries to history table (entries list should only have losers after draw)
+        # RULE: First choice gets two entries into the draw, second gets one
+        draw_list = []
         for entry in entries:
-            await entryhistdb.create_entry_hist(entry.name, False, entry.guild_id, entry.user_id)
-        # Delete all entries for guild (all should be added to the history now)
-        await entriesdb.delete_all_entries_for_guild(guild.id)
+            if entry.first:
+                draw_list.extend([entry, entry])
+            else:
+                draw_list.append(entry)
+        # Draw two winners and clean up
+        winner1 = await draw(draw_list)
+        winner2 = await draw(draw_list)
+        if winner1 or winner2:
+            # Add entries into the history table
+            for entry in entries:
+                did_win = False
+                if entry == winner1 or entry == winner2:
+                    did_win = True
+                await entryhistdb.create_entry_hist(entry.name, did_win, entry.guild_id, entry.user_id)
+            # Delete all entries for guild
+            await entriesdb.delete_all_entries_for_guild(guild.id)
 
     async def autodraw(self, guild: guildsdb.RespGuild):
         """Run the autodraw on schedule

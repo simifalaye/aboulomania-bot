@@ -395,13 +395,15 @@ class Draw(commands.Cog, name="draw"):
                 counter = Counter([entry.name for entry in entries])
                 most_common_entry, most_common_count = counter.most_common(1)[0]
                 # last win date
-                datetime_objects = [parser.parse(x.created_at) for x in entries]
-                last_win = max(datetime_objects)
-                last_win_str = last_win.strftime("%m/%d/%Y")
+                datetime_objects = [parser.parse(x.created_at) for x in entries if x.won]
+                last_win_str = ""
+                if datetime_objects:
+                    last_win = max(datetime_objects)
+                    last_win_str = last_win.strftime("%m/%d/%Y")
                 # summary
                 embed.add_field(
                         name=name,
-                        value=f"Wins: {wins}\nFavorite: {most_common_entry} ({most_common_count})\nLast win: {last_win_str}",
+                        value=f"Wins: {wins}\nFavorite: {most_common_entry} ({most_common_count})\nLast win date: {last_win_str}",
                         inline=False)
         await ctx.send(embed=embed)
 
@@ -444,7 +446,7 @@ class Draw(commands.Cog, name="draw"):
             # summary
             embed.add_field(
                     name=name,
-                    value=f"Wins: {wins}\nBiggest fan: {username} ({most_picked_by_count})\nLast win: {last_win_str}",
+                    value=f"Wins: {wins}\nBiggest fan: {username} ({most_picked_by_count})\nLast pick date: {last_win_str}",
                     inline=False)
         await ctx.send(embed=embed)
 

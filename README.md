@@ -2,7 +2,6 @@
 <p align="center">When you just can't decide</p>
 <p align="center">Built using python and sqlite</p>
 <p align="center">
-  <a href="https://discord.gg/mTBrXyWxAF"><img src="https://img.shields.io/discord/739934735387721768?logo=discord"></a>
   <a href="https://github.com/simifalaye/aboulomania-bot/commits/main"><img src="https://img.shields.io/github/last-commit/simifalaye/aboulomania-bot"></a>
   <a href="https://github.com/simifalaye/aboulomania-bot/blob/main/LICENSE"><img src="https://img.shields.io/github/license/simifalaye/aboulomania-bot"></a>
   <a href="https://github.com/simifalaye/aboulomania-bot"><img src="https://img.shields.io/github/languages/code-size/simifalaye/aboulomania-bot"></a>
@@ -34,6 +33,7 @@ All commands start with "!" (the default prefix)
   has been configured) or manually by running "*draw_now*"
 
 **Draw Rules**:
+* If all users in the draw chose the same choice, it wins automatically
 * Each user gets two picks in the draw
 * The first pick gets an additional entry in the draw
 * Two winners are drawn from the entry list

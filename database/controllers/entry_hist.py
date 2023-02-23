@@ -77,6 +77,17 @@ async def read_all_entry_hist_for_user_in_guild(guild_id: int, user_id: int) -> 
             logger.error(e)
             return None
 
+async def update_all_entry_hist_in_guild_by_name(guild_id: int, old_name: str, new_name: str) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute("UPDATE entry_hist SET name=? WHERE guild_id=? AND name=?",
+                             (new_name, guild_id, old_name,))
+            await db.commit()
+            return True
+        except Exception as e:
+            logger.error(e)
+            return False
+
 async def delete_all_entry_hist() -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:

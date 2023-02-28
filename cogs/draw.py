@@ -19,6 +19,9 @@ from helpers import checks
 from helpers.logger import logger
 from helpers.config import config as app_config
 
+NUM_DRAWS_DEFAULT = 2
+NUM_DRAWS_MAX = 5
+
 class Draw(commands.Cog, name="draw"):
     def __init__(self, bot):
         self.bot = bot
@@ -29,7 +32,7 @@ class Draw(commands.Cog, name="draw"):
     Helper Methods
     """
 
-    async def run_draw(self, guild_id: int, channel_id: int):
+    async def run_draw(self, guild_id: int, channel_id: int, count: int):
         """Run draw and output results to channel
 
         Args:
@@ -46,10 +49,31 @@ class Draw(commands.Cog, name="draw"):
             logger.error("Unable to find channel for channel id '{}'".format(channel_id))
             return
 
-        async def draw(l: list[entriesdb.RespEntry]) -> entriesdb.RespEntry | None:
-            if not l:
+        async def draw(sl: list[entriesdb.RespEntry], wl: list[entriesdb.RespEntry]) -> bool:
+            if len(sl) < 1:
                 await channel.send("No more entries to draw from.")
-                return None
+                return False
+            # RULE_1: If a all users picked an entry, it wins automatically
+            # -------------------------------------------------------------
+            num_users = len(set(e.user_id for e in sl))
+            e_by_name = defaultdict(list[entriesdb.RespEntry])
+            for e in sl:
+                e_by_name[e.name].append(e)
+            for _, entries in e_by_name.items():
+                num_e = len(entries)
+                if num_e > 0 and num_e == num_users:
+                    wl[:] += entries
+                    sl[:] = [e for e in sl if e not in entries]
+                    await channel.send('**"{}"** automatically wins since selected by all users.'.format(entries[0].name))
+                    return True
+            # RULE_2: All first picks get two entries in the draw
+            # ---------------------------------------------------
+            draw_list = []
+            for e in sl:
+                if e.first:
+                    draw_list.extend([e, e])
+                else:
+                    draw_list.append(e)
             # Print list of entries being selected from
             list_str=""
             for i, item in enumerate(draw_list, start=1):
@@ -62,41 +86,40 @@ class Draw(commands.Cog, name="draw"):
             winner = random.choice(draw_list)
             user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
-                # RULE: If a user wins, their entries are removed from the draw_list
-                # RULE: Each unique pick can only win once so remove other entries from the draw_list
-                l[:] = [e for e in l if e.user_id != winner.user_id and e.name != winner.name]
+                wl[:] += [winner]
+                # RULE_3: If a user wins, their entries are removed from the draw list
+                # RULE_4: If a choice wins, it can't be selected again so remove from draw list
+                # -------------------------------------------------------------------------------------
+                sl[:] = [e for e in sl if e.user_id != winner.user_id and e.name != winner.name]
                 # Output winner
                 await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
-                return winner
-            # Handle error
-            await channel.send('Unable to draw a winner. Something went wrong')
-            logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
-            return None
+                return True
+            else:
+                await channel.send('Unable to draw a winner. Something went wrong')
+                logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
+                return False
 
-        # Notify channel
-        await channel.send('**Running the draw and selecting two winners**:')
-        # Read all entries
+        # Read all entries for the guild
         entries = await entriesdb.read_all_entries_for_guild(guild.id)
         if not entries:
             await channel.send('No entries found. Please enter some first with "!draw_enter".')
             return
-        # RULE: First choice gets two entries into the draw, second gets one
-        draw_list = []
-        for entry in entries:
-            if entry.first:
-                draw_list.extend([entry, entry])
-            else:
-                draw_list.append(entry)
-        # Draw two winners and clean up
-        winner1 = await draw(draw_list)
-        winner2 = await draw(draw_list)
-        if winner1 or winner2:
-            # Add entries into the history table
-            for entry in entries:
-                did_win = False
-                if entry == winner1 or entry == winner2:
-                    did_win = True
-                await entryhistdb.create_entry_hist(entry.name, did_win, entry.guild_id, entry.user_id)
+
+        # Notify channel about the incoming draw
+        await channel.send('**Running the draw and selecting {} winners**:'.format(count))
+
+        # Run draw
+        selection_list = entries.copy()
+        winners_list = []
+        for _ in range(count):
+            if not await draw(selection_list, winners_list):
+                break
+
+        # Cleanup
+        if len(winners_list) > 0:
+            for e in entries:
+                did_win = True if e in winners_list else False
+                await entryhistdb.create_entry_hist(e.name, did_win, e.guild_id, e.user_id)
             # Delete all entries for guild
             await entriesdb.delete_all_entries_for_guild(guild.id)
 
@@ -129,7 +152,7 @@ class Draw(commands.Cog, name="draw"):
                 # Run draw on guild if channel is set
                 if guild.channel_id > 0:
                     logger.info("Running autodraw for guild: {}".format(guild.id))
-                    await self.run_draw(guild.id, guild.channel_id)
+                    await self.run_draw(guild.id, guild.channel_id, NUM_DRAWS_DEFAULT)
                 else:
                     logger.info("Can't run autodraw for guild: {}. Channel not set yet".format(guild.id))
         except Exception as e:
@@ -308,6 +331,9 @@ class Draw(commands.Cog, name="draw"):
         if not ctx.guild or not ctx.author:
             await ctx.send('Something went wrong. Try again later.')
             return
+        if choice1.lower() == choice2.lower():
+            await ctx.send('Cannot select the same choice twice! Try again.')
+            return
 
         err_msg = "Unable to create the draw entry. Please try again."
         # Create user if not exists
@@ -350,17 +376,21 @@ class Draw(commands.Cog, name="draw"):
 
     @commands.hybrid_command(
         name="draw_now",
-        description="(Admin) Immediately run the draw for the current entries."
+        description="(Admin) Immediately draw {} from the current entries ('!draw_now' or '!draw_now <count>').".format(NUM_DRAWS_DEFAULT)
     )
     @checks.is_admin()
     @checks.in_channel()
     @checks.in_guild()
-    async def draw_now(self, ctx: Context) -> None:
+    async def draw_now(self, ctx: Context, count: int | None) -> None:
+        count = NUM_DRAWS_DEFAULT if count is None else count
         if not ctx.guild or not ctx.channel:
             await ctx.send('Something went wrong. Try again later.')
             return
+        if count < 1 or count > NUM_DRAWS_MAX:
+            await ctx.send('"Count" must be a min of 1 and a max of {}.'.format(NUM_DRAWS_MAX))
+            return
 
-        await self.run_draw(ctx.guild.id, ctx.channel.id)
+        await self.run_draw(ctx.guild.id, ctx.channel.id, count)
 
     @commands.hybrid_command(
         name="draw_user_stats",
@@ -449,6 +479,23 @@ class Draw(commands.Cog, name="draw"):
                     value=f"Wins: {wins}\nBiggest fan: {username} ({most_picked_by_count})\nLast pick date: {last_win_str}",
                     inline=False)
         await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="draw_entry_rename",
+        description="Rename an entry in the history (!draw_entry_rename old new)."
+    )
+    @checks.in_channel()
+    @checks.in_guild()
+    async def draw_entry_rename(self, ctx: Context, old: str, new: str) -> None:
+        if not ctx.guild:
+            await ctx.send('Something went wrong. Try again later.')
+            return
+
+        # Update
+        if await entryhistdb.update_all_entry_hist_in_guild_by_name(ctx.guild.id, old, new):
+            await ctx.send('Successfully renamed entry in the history.')
+        else:
+            await ctx.send('Failed to rename entry in the history.')
 
 async def setup(bot):
     await bot.add_cog(Draw(bot))

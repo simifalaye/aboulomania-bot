@@ -327,11 +327,11 @@ class Draw(commands.Cog, name="draw"):
     )
     @checks.in_channel()
     @checks.in_guild()
-    async def draw_enter(self, ctx: Context, choice1: str, choice2: str) -> None:
+    async def draw_enter(self, ctx: Context, choice1: str, choice2: str | None = None) -> None:
         if not ctx.guild or not ctx.author:
             await ctx.send('Something went wrong. Try again later.')
             return
-        if choice1.lower() == choice2.lower():
+        if choice2 != None and choice1.lower() == choice2.lower():
             await ctx.send('Cannot select the same choice twice! Try again.')
             return
 
@@ -351,14 +351,14 @@ class Draw(commands.Cog, name="draw"):
             await ctx.send(err_msg)
             return
         # Create new entries (set all entries to lowercase for matching entries later)
-        if not await entriesdb.create_one_entry(choice1.lower(), True, ctx.guild.id, ctx.author.id) or \
-                not await entriesdb.create_one_entry(choice2.lower(), False, ctx.guild.id, ctx.author.id):
-            await ctx.send(err_msg)
-            return
+        response = 'Failed to enter your picks into the draw. Try again'
+        if await entriesdb.create_one_entry(choice1.lower(), True, ctx.guild.id, ctx.author.id):
+            response = '{} has entered their picks into the draw: "**{}**"'.format(ctx.author.mention, choice1)
+            if choice2 != None and await entriesdb.create_one_entry(choice2.lower(), False, ctx.guild.id, ctx.author.id):
+                response += ' and "**{}**"'.format(choice2)
 
-        # Success
-        await ctx.send('{} has entered their picks into the draw: "**{}**" and "**{}**".'.format(
-            ctx.author.mention, choice1, choice2))
+        # Send response
+        await ctx.send(response)
 
     @commands.hybrid_command(
         name="draw_leave",

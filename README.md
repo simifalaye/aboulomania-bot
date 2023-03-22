@@ -33,12 +33,17 @@ All commands start with "!" (the default prefix)
   has been configured) or manually by running "*draw_now*"
 
 **Draw Rules**:
-* If all users in the draw chose the same choice, it wins automatically
-* Each user gets two picks in the draw
-* The first pick gets an additional entry in the draw
-* Two winners are drawn from the entry list
-* If someone gets one of their picks, all of their entries are removed from the next draw
-* If a pick wins, that pick is removed from the next draw so it can't be selected again
+Each user gets up to two choices in the draw and the auto-draw will
+select two winners by default. You can manually run the draw and set the
+number of winners (max 5) to pick using the "*draw_now*" command:
+1. If a choice is unanimous, it wins automatically
+2. Each user's first choice gets an additional entry in the draw
+   (greater chance of winning) if and only if there wasn't a unanimous
+   choice already selected
+3. If someone wins one of the draws, their entries are removed from the
+   next draw so they can't be selected again
+4. If a choice wins, that choice is removed from the next draw so it
+   can't be selected again
 
 ## Pre-Install Requirements
 

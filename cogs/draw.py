@@ -49,28 +49,47 @@ class Draw(commands.Cog, name="draw"):
             logger.error("Unable to find channel for channel id '{}'".format(channel_id))
             return
 
-        async def draw(sl: list[entriesdb.RespEntry], wl: list[entriesdb.RespEntry]) -> bool:
-            if len(sl) < 1:
-                await channel.send("No more entries to draw from.")
-                return False
+        def get_unanimous(entries: list[entriesdb.RespEntry]) -> str | None:
+            user_ids = set(e.user_id for e in entries)
+            names = set(e.name for e in entries)
+            for name in names:
+                name_user_ids = set(e.user_id for e in entries if e.name == name)
+                if user_ids == name_user_ids:
+                    return name
+            return None
+
+        # Notify channel about the incoming draw
+        await channel.send('**Running the draw and selecting {} winners**'.format(count))
+
+        # Read all entries for the guild
+        entries = await entriesdb.read_all_entries_for_guild(guild.id)
+        if not entries:
+            await channel.send('No entries found. Please enter some first with "!draw_enter".')
+            return
+
+        # Run draw
+        selection_list = entries.copy()
+        winners_list = []
+        had_unanimous = False
+        for _ in range(count):
+            if not selection_list:
+                await channel.send('No more entries to draw from.')
+                return
             # RULE_1: If a all users picked an entry, it wins automatically
             # -------------------------------------------------------------
-            num_users = len(set(e.user_id for e in sl))
-            e_by_name = defaultdict(list[entriesdb.RespEntry])
-            for e in sl:
-                e_by_name[e.name].append(e)
-            for _, entries in e_by_name.items():
-                num_e = len(entries)
-                if num_e > 0 and num_e == num_users:
-                    wl[:] += entries
-                    sl[:] = [e for e in sl if e not in entries]
-                    await channel.send('**"{}"** automatically wins since selected by all users.'.format(entries[0].name))
-                    return True
-            # RULE_2: All first picks get two entries in the draw
-            # ---------------------------------------------------
+            unanimous = get_unanimous(selection_list)
+            if unanimous is not None:
+                # Entry is unanimous so everyone wins. No need to enter into winners list
+                # Remove the unanimous entry from selection list
+                had_unanimous = True
+                selection_list[:] = [e for e in selection_list if e.name != unanimous]
+                await channel.send('**"{}"** automatically wins since selected by all users.'.format(unanimous))
+                continue
+            # RULE_2: All first picks get two entries in the draw unless we have already drawn a unanimous pick
+            # -------------------------------------------------------------------------------------------------
             draw_list = []
-            for e in sl:
-                if e.first:
+            for e in selection_list:
+                if not had_unanimous and e.first:
                     draw_list.extend([e, e])
                 else:
                     draw_list.append(e)
@@ -86,33 +105,17 @@ class Draw(commands.Cog, name="draw"):
             winner = random.choice(draw_list)
             user = discord.utils.get(guild.members, id=int(winner.user_id))
             if winner and user:
-                wl[:] += [winner]
+                winners_list[:] += [winner]
                 # RULE_3: If a user wins, their entries are removed from the draw list
                 # RULE_4: If a choice wins, it can't be selected again so remove from draw list
                 # -------------------------------------------------------------------------------------
-                sl[:] = [e for e in sl if e.user_id != winner.user_id and e.name != winner.name]
+                selection_list[:] = [e for e in selection_list if e.user_id != winner.user_id and e.name != winner.name]
                 # Output winner
                 await channel.send('**Winner is "{}"** entered by {}.'.format(winner.name, user.mention))
-                return True
+                continue
             else:
                 await channel.send('Unable to draw a winner. Something went wrong')
                 logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
-                return False
-
-        # Read all entries for the guild
-        entries = await entriesdb.read_all_entries_for_guild(guild.id)
-        if not entries:
-            await channel.send('No entries found. Please enter some first with "!draw_enter".')
-            return
-
-        # Notify channel about the incoming draw
-        await channel.send('**Running the draw and selecting {} winners**:'.format(count))
-
-        # Run draw
-        selection_list = entries.copy()
-        winners_list = []
-        for _ in range(count):
-            if not await draw(selection_list, winners_list):
                 break
 
         # Cleanup

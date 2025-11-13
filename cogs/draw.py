@@ -118,13 +118,13 @@ class Draw(commands.Cog, name="draw"):
                 logger.error('Error drawing winner (winner, user): ({}, {})'.format(winner, user))
                 break
 
-        # Cleanup
+        # Write wins to history table
         if len(winners_list) > 0:
             for e in entries:
                 did_win = True if e in winners_list else False
                 await entryhistdb.create_entry_hist(e.name, did_win, e.guild_id, e.user_id)
-            # Delete all entries for guild
-            await entriesdb.delete_all_entries_for_guild(guild.id)
+
+        await entriesdb.delete_all_entries_for_guild(guild.id)
 
     async def autodraw(self, guild: guildsdb.RespGuild):
         """Run the autodraw on schedule

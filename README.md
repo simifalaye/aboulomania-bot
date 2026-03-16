@@ -49,6 +49,7 @@ number of winners (max 5) to pick using the "*draw_now*" command:
 
 * python3
 * pip3
+* python3-venv
 
 ## Setup
 
@@ -93,10 +94,42 @@ following fields:
 ## Install & Run
 
 Install:
-```
-python3 -m pip install -r requirements.txt
+```bash
+python3 -m venv <path_to_app>/venv
+source <path_to_app>/venv/bin/activate
+pip install -r requirements.txt
 ```
 Run:
+If inside of venv
+```bash
+python main.py
 ```
-python3 main.py
+If outside of venv
+```bash
+<path_to_app>/venv/bin/python app.py
+```
+
+## Running as a systemd service
+
+**Create service file at '/etc/systemd/system/aboulomania-bot.service'**
+```
+[Unit]
+Description=Aboulomania Discord Bot
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/aboulomania-bot
+ExecStart=/opt/aboulomania-bot/venv/bin/python main.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Start service**
+```bash
+systemctl daemon-reload
+systemctl enable aboulomania-bot
+systemctl restart aboulomania-bot
 ```
